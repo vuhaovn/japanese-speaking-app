@@ -135,6 +135,7 @@ export default function PracticeApp({ initialSentences }: Props) {
   // Settings
   const [rate, setRate] = useState(0.9)
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
+  const [voicesLoaded, setVoicesLoaded] = useState(false)
   const [voiceIdx, setVoiceIdx] = useState(0)
   const [hideVi, setHideVi] = useState(false)
 
@@ -200,6 +201,7 @@ export default function PracticeApp({ initialSentences }: Props) {
     function loadVoices() {
       const jaVoices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith('ja'))
       setVoices(jaVoices)
+      setVoicesLoaded(true)
     }
     loadVoices()
     speechSynthesis.addEventListener('voiceschanged', loadVoices)
@@ -645,8 +647,10 @@ export default function PracticeApp({ initialSentences }: Props) {
         <div className="row">
           <label>Giọng đọc</label>
           <select value={voiceIdx} onChange={(e) => setVoiceIdx(Number(e.target.value))}>
-            {voices.length === 0
-              ? <option value={0}>(máy chưa có giọng tiếng Nhật)</option>
+            {!voicesLoaded
+              ? <option value={0}>Đang tải giọng đọc...</option>
+              : voices.length === 0
+              ? <option value={0}>(Không có giọng tiếng Nhật trên thiết bị này)</option>
               : voices.map((v, i) => <option key={i} value={i}>{v.name} ({v.lang})</option>)
             }
           </select>

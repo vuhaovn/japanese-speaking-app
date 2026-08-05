@@ -6,12 +6,17 @@ function waitForVoices(): Promise<SpeechSynthesisVoice[]> {
   if (existing.length > 0) return Promise.resolve(existing)
 
   return new Promise((resolve) => {
-    // Safari may never fire onvoiceschanged, so we fall back after 1s
-    const timeout = setTimeout(() => resolve(synth.getVoices()), 1000)
-    synth.onvoiceschanged = () => {
+    // Safari may never fire voiceschanged — fall back after 1s
+    const timeout = setTimeout(() => {
+      synth.removeEventListener('voiceschanged', onChanged)
+      resolve(synth.getVoices())
+    }, 1000)
+    function onChanged() {
       clearTimeout(timeout)
+      synth.removeEventListener('voiceschanged', onChanged)
       resolve(synth.getVoices())
     }
+    synth.addEventListener('voiceschanged', onChanged)
   })
 }
 
