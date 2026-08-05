@@ -75,9 +75,12 @@ body {
   color: var(--ink-soft);
   margin-bottom: 18px;
 }
-.dots { display: flex; gap: 6px; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.dots { display: flex; gap: 6px; flex-wrap: wrap; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line); transition: background 0.3s; }
+.dot.done { background: var(--good); }
 .dot.on { background: var(--accent); }
+/* Current overrides done when both classes present */
+.dot.on.done { background: var(--accent); }
 
 /* ---- Pitch diagram ---- */
 .pitch-wrap { overflow-x: auto; padding: 6px 0 2px; margin-bottom: 2px; }
@@ -196,6 +199,20 @@ select {
   color: var(--ink);
   max-width: 220px;
   font-size: 13px;
+}
+
+/* ---- Keyboard hints ---- */
+.kbd-hint { font-size: 11px; color: var(--ink-soft); text-align: center; margin-top: 14px; opacity: 0.75; }
+.kbd {
+  display: inline-block;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 5px;
+  font-family: monospace;
+  font-size: 10px;
+  line-height: 1.7;
+  margin: 0 2px;
 }
 
 /* ---- Toggle switch ---- */

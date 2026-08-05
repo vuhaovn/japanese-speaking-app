@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { sentences } from '@/data/sentences'
+import type { Sentence } from '@/lib/db/schema'
 import { speak, stopSpeech, isSpeechAvailable } from '@/lib/speech/tts'
 import { startRecording, isRecordingSupported, type RecordingSession } from '@/lib/speech/recorder'
+import { useSessionKey } from '@/hooks/useSessionKey'
+import { logSession, getSessionProgress } from '@/app/actions'
 
 // --- Mora splitting (gộp âm nhỏ ゃゅょ, tách っ ん ー) ---
 const SMALL = 'ゃゅょぁぃぅぇぉャュョァィゥェォゎヮ'
@@ -33,18 +35,20 @@ function similarity(a: string, b: string): number {
   return Math.round((1 - d[m][n] / Math.max(m, n)) * 100)
 }
 
-// --- Pitch SVG (demo heiban — chưa có dữ liệu thật) ---
-function PitchSVG({ kana }: { kana: string }) {
+// --- Pitch SVG ---
+// Dùng pitch thật nếu có, fallback về heiban demo
+function PitchSVG({ kana, pitch }: { kana: string; pitch?: ('H' | 'L')[] | null }) {
   const moras = toMoras(kana)
   if (moras.length === 0) return null
 
+  const pattern: ('H' | 'L')[] =
+    pitch && pitch.length === moras.length
+      ? pitch
+      : moras.map((_, i) => (i === 0 ? 'L' : 'H')) // heiban demo
+
   const stepX = 30, padX = 14, hiY = 20, loY = 48, r = 4
   const width = padX * 2 + stepX * (moras.length - 1)
-  const pts = moras.map((m, i) => ({
-    x: padX + i * stepX,
-    y: i === 0 ? loY : hiY, // heiban: mora đầu thấp, còn lại cao
-    m,
-  }))
+  const pts = moras.map((m, i) => ({ x: padX + i * stepX, y: pattern[i] === 'H' ? hiY : loY, m }))
   const pathD = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join(' ')
 
   return (
@@ -54,13 +58,7 @@ function PitchSVG({ kana }: { kana: string }) {
         {pts.map((p, i) => (
           <g key={i}>
             <circle cx={p.x} cy={p.y} r={r} fill="var(--accent)" />
-            <text
-              x={p.x} y={66}
-              textAnchor="middle"
-              fontFamily="var(--jp-serif)"
-              fontSize={19}
-              fill="var(--ink)"
-            >
+            <text x={p.x} y={66} textAnchor="middle" fontFamily="var(--jp-serif)" fontSize={19} fill="var(--ink)">
               {p.m}
             </text>
           </g>
@@ -73,10 +71,16 @@ function PitchSVG({ kana }: { kana: string }) {
 // --- Main component ---
 type Mode = 'shadow' | 'repeat'
 
-export default function PracticeApp() {
+interface Props {
+  initialSentences: Sentence[]
+}
+
+export default function PracticeApp({ initialSentences }: Props) {
   const [mounted, setMounted] = useState(false)
   const [mode, setMode] = useState<Mode>('shadow')
   const [idx, setIdx] = useState(0)
+  const sessionKey = useSessionKey()
+  const [practicedIds, setPracticedIds] = useState<Set<number>>(new Set())
 
   // Settings
   const [rate, setRate] = useState(0.9)
@@ -96,7 +100,10 @@ export default function PracticeApp() {
   const [micError, setMicError] = useState<string | null>(null)
   const [heard, setHeard] = useState<{ text: string; score: number } | null>(null)
 
-  // Refs — truy cập state mới nhất trong closures mà không cần deps
+  // Keyboard shortcut handler ref — updated every render so handler is always fresh
+  const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {})
+
+  // Refs
   const isLoopingRef = useRef(false)
   const loopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const idxRef = useRef(0)
@@ -106,15 +113,35 @@ export default function PracticeApp() {
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const prevUrlRef = useRef<string | null>(null)
+  // Track nếu câu hiện tại đã được luyện (để quyết định có log session không)
+  const hasInteractedRef = useRef(false)
+  const heardRef = useRef<{ text: string; score: number } | null>(null)
+  const recordingUrlRef = useRef<string | null>(null)
 
   isLoopingRef.current = isLooping
   idxRef.current = idx
   rateRef.current = rate
   voiceRef.current = voices[voiceIdx] ?? null
+  heardRef.current = heard
+  recordingUrlRef.current = recordingUrl
+
+  // Load today's practiced sentence IDs when sessionKey becomes available
+  useEffect(() => {
+    if (!sessionKey) return
+    getSessionProgress(sessionKey)
+      .then((rows) => setPracticedIds(new Set(rows.map((r) => r.sentenceId))))
+      .catch(() => { /* silent */ })
+  }, [sessionKey])
+
+  // Register keyboard shortcuts once; handler ref stays current via assignment below
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => keyHandlerRef.current(e)
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   useEffect(() => {
     setMounted(true)
-
     if (!isSpeechAvailable()) return
 
     function loadVoices() {
@@ -133,12 +160,25 @@ export default function PracticeApp() {
     }
   }, [])
 
-  // Giải phóng blob URL cũ khi recordingUrl thay đổi
   useEffect(() => {
     const prev = prevUrlRef.current
     prevUrlRef.current = recordingUrl
     if (prev) URL.revokeObjectURL(prev)
   }, [recordingUrl])
+
+  // Ghi lại lịch sử luyện tập khi chuyển câu
+  const maybeLog = useCallback(() => {
+    if (!sessionKey || !hasInteractedRef.current || initialSentences.length === 0) return
+    const sentence = initialSentences[idxRef.current]
+    // Optimistic update: mark as practiced immediately so dot turns green on navigate
+    setPracticedIds((prev) => new Set([...prev, sentence.id]))
+    logSession({
+      sessionKey,
+      sentenceId: sentence.id,
+      mode,
+      matchScore: mode === 'repeat' ? (heardRef.current?.score ?? null) : null,
+    }).catch(() => { /* silent fail — không ảnh hưởng UX */ })
+  }, [sessionKey, mode, initialSentences])
 
   const resetSentenceState = useCallback(() => {
     stopSpeech()
@@ -153,12 +193,14 @@ export default function PracticeApp() {
     setIsPlayingBack(false)
     setMicError(null)
     setHeard(null)
+    hasInteractedRef.current = false
   }, [])
 
   // --- Shadowing ---
   const shadowPlay = useCallback((i: number) => {
+    hasInteractedRef.current = true
     setIsPlaying(true)
-    speak(sentences[i].jp, {
+    speak(initialSentences[i].jp, {
       rate: rateRef.current,
       voice: voiceRef.current,
       onEnd: () => {
@@ -168,7 +210,7 @@ export default function PracticeApp() {
         }
       },
     })
-  }, [])
+  }, [initialSentences])
 
   const handleShadowPlay = () => {
     if (isPlaying) {
@@ -191,9 +233,10 @@ export default function PracticeApp() {
 
   // --- Repeat ---
   const handleRepeatListen = () => {
+    hasInteractedRef.current = true
     setIsSpeaking(true)
     setHeard(null)
-    speak(sentences[idx].jp, {
+    speak(initialSentences[idx].jp, {
       rate: rateRef.current,
       voice: voiceRef.current,
       onEnd: () => setIsSpeaking(false),
@@ -202,7 +245,6 @@ export default function PracticeApp() {
 
   const handleToggleRecording = async () => {
     if (isRecording) {
-      // Dừng ghi âm
       if (recognitionRef.current) { recognitionRef.current.stop(); recognitionRef.current = null }
       if (sessionRef.current) {
         const url = await sessionRef.current.stop()
@@ -211,10 +253,7 @@ export default function PracticeApp() {
       }
       setIsRecording(false)
     } else {
-      // Bắt đầu ghi âm
       setMicError(null)
-
-      // Chạy song song SpeechRecognition nếu trình duyệt hỗ trợ (Chrome/Edge)
       const SRClass = typeof window !== 'undefined'
         ? (window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null)
         : null
@@ -226,12 +265,12 @@ export default function PracticeApp() {
         rec.maxAlternatives = 1
         rec.onresult = (e) => {
           const text = e.results[0][0].transcript
-          const target = sentences[idxRef.current].jp.replace(/[、。？！\s]/g, '')
+          const target = initialSentences[idxRef.current].jp.replace(/[、。？！\s]/g, '')
           const said = text.replace(/[、。？！\s]/g, '')
           setHeard({ text, score: similarity(said, target) })
         }
         recognitionRef.current = rec
-        try { rec.start() } catch { /* silent fail — bản ghi âm vẫn hoạt động */ }
+        try { rec.start() } catch { /* silent fail */ }
       }
 
       try {
@@ -260,11 +299,39 @@ export default function PracticeApp() {
   }
 
   // --- Nav ---
-  const handlePrev = () => { resetSentenceState(); setIdx((i) => (i - 1 + sentences.length) % sentences.length) }
-  const handleNext = () => { resetSentenceState(); setIdx((i) => (i + 1) % sentences.length) }
-  const handleMode = (m: Mode) => { resetSentenceState(); setMode(m) }
+  const handlePrev = () => {
+    maybeLog()
+    resetSentenceState()
+    setIdx((i) => (i - 1 + initialSentences.length) % initialSentences.length)
+  }
 
-  // Loading skeleton
+  const handleNext = () => {
+    maybeLog()
+    resetSentenceState()
+    setIdx((i) => (i + 1) % initialSentences.length)
+  }
+
+  const handleMode = (m: Mode) => {
+    maybeLog()
+    resetSentenceState()
+    setMode(m)
+  }
+
+  // Update keyboard handler every render — avoids stale closures in the global listener
+  keyHandlerRef.current = (e: KeyboardEvent) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
+    if (e.code === 'ArrowLeft') { e.preventDefault(); handlePrev() }
+    else if (e.code === 'ArrowRight') { e.preventDefault(); handleNext() }
+    else if (e.code === 'Space') {
+      e.preventDefault()
+      if (mode === 'shadow') handleShadowPlay()
+      else if (!isSpeaking && !isRecording) handleRepeatListen()
+    } else if (e.code === 'KeyR' && mode === 'repeat' && !isSpeaking) {
+      e.preventDefault()
+      handleToggleRecording()
+    }
+  }
+
   if (!mounted) {
     return (
       <div style={{ maxWidth: 620, margin: '0 auto', padding: '24px 16px' }}>
@@ -274,17 +341,27 @@ export default function PracticeApp() {
     )
   }
 
-  if (!isSpeechAvailable()) {
+  if (initialSentences.length === 0) {
     return (
       <div style={{ maxWidth: 620, margin: '0 auto', padding: '24px 16px' }}>
-        <div className="card warn">
-          Trình duyệt của bạn không hỗ trợ Text-to-Speech. Vui lòng dùng Chrome hoặc Edge.
+        <div className="card" style={{ color: 'var(--ink-soft)', textAlign: 'center' }}>
+          Chưa có câu luyện nào. Chạy <code>npm run db:seed</code> để thêm dữ liệu.
         </div>
       </div>
     )
   }
 
-  const sentence = sentences[idx]
+  if (!isSpeechAvailable()) {
+    return (
+      <div style={{ maxWidth: 620, margin: '0 auto', padding: '24px 16px' }}>
+        <div className="card warn">
+          Trình duyệt không hỗ trợ Text-to-Speech. Vui lòng dùng Chrome hoặc Edge.
+        </div>
+      </div>
+    )
+  }
+
+  const sentence = initialSentences[idx]
   const micOk = isRecordingSupported()
 
   return (
@@ -320,17 +397,33 @@ export default function PracticeApp() {
       <div className="card">
         {/* Progress */}
         <div className="progress">
-          <span>Câu {idx + 1} / {sentences.length}</span>
+          <span>
+            Câu {idx + 1} / {initialSentences.length}
+            {practicedIds.size > 0 && (
+              <span style={{ marginLeft: 10, color: 'var(--good)', fontWeight: 600 }}>
+                · {practicedIds.size} câu hôm nay
+              </span>
+            )}
+          </span>
           <div className="dots">
-            {sentences.map((_, i) => (
-              <div key={i} className={`dot${i === idx ? ' on' : ''}`} />
-            ))}
+            {initialSentences.map((s, i) => {
+              const done = practicedIds.has(s.id)
+              return (
+                <div
+                  key={i}
+                  className={`dot${i === idx ? ' on' : ''}${done ? ' done' : ''}`}
+                  title={done ? `Câu ${i + 1}: đã luyện` : `Câu ${i + 1}`}
+                />
+              )
+            })}
           </div>
         </div>
 
-        {/* Pitch diagram (demo) */}
-        <span className="pitch-demo-tag">Đường cao độ minh họa — thay bằng dữ liệu OJAD thật</span>
-        <PitchSVG kana={sentence.kana} />
+        {/* Pitch diagram */}
+        {!sentence.pitch && (
+          <span className="pitch-demo-tag">Đường cao độ minh họa — thay bằng dữ liệu OJAD thật</span>
+        )}
+        <PitchSVG kana={sentence.kana} pitch={sentence.pitch} />
 
         {/* JP sentence */}
         <div className="jp">{sentence.jp}</div>
@@ -348,10 +441,7 @@ export default function PracticeApp() {
               >
                 {isPlaying ? '■ Dừng' : '▶ Phát âm mẫu'}
               </button>
-              <button
-                className={`btn${isLooping ? ' btn-primary' : ''}`}
-                onClick={toggleLoop}
-              >
+              <button className={`btn${isLooping ? ' btn-primary' : ''}`} onClick={toggleLoop}>
                 ↺ {isLooping ? 'Đang lặp' : 'Lặp lại'}
               </button>
             </>
@@ -384,7 +474,7 @@ export default function PracticeApp() {
           )}
         </div>
 
-        {/* Feedback area */}
+        {/* Feedback */}
         <div className="feedback">
           {micError && <div className="warn">{micError}</div>}
           {!micOk && mode === 'repeat' && (
@@ -413,6 +503,16 @@ export default function PracticeApp() {
           <button className="btn" onClick={handlePrev}>← Câu trước</button>
           <button className="btn" onClick={handleNext}>Câu sau →</button>
         </div>
+
+        {/* Keyboard shortcuts hint */}
+        <div className="kbd-hint">
+          <kbd className="kbd">←</kbd><kbd className="kbd">→</kbd> chuyển câu
+          &nbsp;·&nbsp;
+          <kbd className="kbd">Space</kbd> phát/dừng
+          {mode === 'repeat' && (
+            <>&nbsp;·&nbsp;<kbd className="kbd">R</kbd> ghi âm</>
+          )}
+        </div>
       </div>
 
       {/* Settings */}
@@ -431,9 +531,8 @@ export default function PracticeApp() {
           <select value={voiceIdx} onChange={(e) => setVoiceIdx(Number(e.target.value))}>
             {voices.length === 0
               ? <option value={0}>(máy chưa có giọng tiếng Nhật)</option>
-              : voices.map((v, i) => (
-                  <option key={i} value={i}>{v.name} ({v.lang})</option>
-                ))}
+              : voices.map((v, i) => <option key={i} value={i}>{v.name} ({v.lang})</option>)
+            }
           </select>
         </div>
         <div className="row">
