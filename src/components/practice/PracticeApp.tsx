@@ -1,23 +1,13 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import type { Sentence } from '@/lib/db/schema'
 import { speak, stopSpeech, isSpeechAvailable } from '@/lib/speech/tts'
 import { startRecording, isRecordingSupported, type RecordingSession } from '@/lib/speech/recorder'
 import { useSessionKey } from '@/hooks/useSessionKey'
 import { logSession, getSessionProgress } from '@/app/actions'
-
-// --- Mora splitting (gộp âm nhỏ ゃゅょ, tách っ ん ー) ---
-const SMALL = 'ゃゅょぁぃぅぇぉャュョァィゥェォゎヮ'
-function toMoras(kana: string): string[] {
-  const clean = kana.replace(/[、。！？\s]/g, '')
-  const out: string[] = []
-  for (const ch of clean) {
-    if (SMALL.includes(ch) && out.length > 0) out[out.length - 1] += ch
-    else out.push(ch)
-  }
-  return out
-}
+import RoleplayTab from './RoleplayTab'
 
 // Levenshtein similarity — đây là khớp VĂN BẢN, không phải chấm phát âm
 function similarity(a: string, b: string): number {
@@ -35,91 +25,8 @@ function similarity(a: string, b: string): number {
   return Math.round((1 - d[m][n] / Math.max(m, n)) * 100)
 }
 
-// --- Pitch SVG (nhỏ, dùng trong tab shadowing/repeat) ---
-function PitchSVG({ kana, pitch }: { kana: string; pitch?: ('H' | 'L')[] | null }) {
-  const moras = toMoras(kana)
-  if (moras.length === 0) return null
-
-  const pattern: ('H' | 'L')[] =
-    pitch && pitch.length === moras.length
-      ? pitch
-      : moras.map((_, i) => (i === 0 ? 'L' : 'H')) // heiban demo
-
-  const stepX = 30, padX = 14, hiY = 20, loY = 48, r = 4
-  const width = padX * 2 + stepX * (moras.length - 1)
-  const pts = moras.map((m, i) => ({ x: padX + i * stepX, y: pattern[i] === 'H' ? hiY : loY, m }))
-  const pathD = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join(' ')
-
-  return (
-    <div className="pitch-wrap">
-      <svg width={width} height={70} viewBox={`0 0 ${width} 70`} display="block">
-        <path d={pathD} stroke="var(--accent)" strokeWidth={2} fill="none" />
-        {pts.map((p, i) => (
-          <g key={i}>
-            <circle cx={p.x} cy={p.y} r={r} fill="var(--accent)" />
-            <text x={p.x} y={66} textAnchor="middle" fontFamily="var(--jp-serif)" fontSize={19} fill="var(--ink)">
-              {p.m}
-            </text>
-          </g>
-        ))}
-      </svg>
-    </div>
-  )
-}
-
-// --- Pitch Diagram (lớn, có màu H/L, dùng trong tab Cao độ) ---
-function PitchDiagram({ kana, pitch, hidden }: { kana: string; pitch?: ('H'|'L')[]|null; hidden: boolean }) {
-  const moras = toMoras(kana)
-  if (moras.length === 0) return null
-
-  const pattern: ('H'|'L')[] =
-    pitch && pitch.length === moras.length
-      ? pitch
-      : moras.map((_, i) => (i === 0 ? 'L' : 'H'))
-
-  const stepX = 46, padX = 26, hiY = 26, loY = 68, r = 6
-  const svgW = padX * 2 + stepX * (moras.length - 1)
-  const svgH = 120
-  const pts = moras.map((m, i) => ({
-    x: padX + i * stepX, y: pattern[i] === 'H' ? hiY : loY, m, hl: pattern[i]
-  }))
-  const pathD = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join(' ')
-
-  return (
-    <div style={{ overflowX: 'auto', paddingBottom: 4, filter: hidden ? 'blur(10px)' : 'none', transition: 'filter 0.25s', userSelect: hidden ? 'none' : undefined }}>
-      <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} display="block">
-        {/* Guide lines */}
-        <line x1={padX - 18} y1={hiY} x2={svgW - padX + 18} y2={hiY} stroke="var(--line)" strokeDasharray="4 4" strokeWidth={1} />
-        <line x1={padX - 18} y1={loY} x2={svgW - padX + 18} y2={loY} stroke="var(--line)" strokeDasharray="4 4" strokeWidth={1} />
-        {/* H / L axis labels */}
-        <text x={padX - 20} y={hiY + 4} fontSize={10} fill="var(--accent)" fontWeight="700" textAnchor="end">H</text>
-        <text x={padX - 20} y={loY + 4} fontSize={10} fill="#8394aa" fontWeight="700" textAnchor="end">L</text>
-        {/* Pitch line */}
-        <path d={pathD} stroke="var(--accent)" strokeWidth={3} fill="none" strokeLinejoin="round" />
-        {pts.map((p, i) => (
-          <g key={i}>
-            <circle cx={p.x} cy={p.y} r={r} fill={p.hl === 'H' ? 'var(--accent)' : '#8394aa'} />
-            {/* H/L label above H dots, below L dots */}
-            <text
-              x={p.x}
-              y={p.hl === 'H' ? hiY - r - 5 : loY + r + 13}
-              textAnchor="middle" fontSize={10}
-              fill={p.hl === 'H' ? 'var(--accent)' : '#8394aa'}
-              fontWeight="700"
-            >{p.hl}</text>
-            {/* Mora character at bottom */}
-            <text x={p.x} y={svgH - 3} textAnchor="middle" fontFamily="var(--jp-serif)" fontSize={22} fill="var(--ink)">
-              {p.m}
-            </text>
-          </g>
-        ))}
-      </svg>
-    </div>
-  )
-}
-
 // --- Main component ---
-type Mode = 'shadow' | 'repeat' | 'pitch'
+type Mode = 'shadow' | 'repeat' | 'roleplay'
 
 interface Props {
   initialSentences: Sentence[]
@@ -134,19 +41,14 @@ export default function PracticeApp({ initialSentences }: Props) {
 
   // Settings
   const [rate, setRate] = useState(0.9)
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
-  const [voicesLoaded, setVoicesLoaded] = useState(false)
-  const [voiceIdx, setVoiceIdx] = useState(0)
+  const [voiceName, setVoiceName] = useState('ja-JP-Neural2-B')
   const [hideVi, setHideVi] = useState(false)
 
   // Shadowing state
   const [isPlaying, setIsPlaying] = useState(false)
   const [isLooping, setIsLooping] = useState(false)
 
-  // Pitch tab state
-  const [pitchHidden, setPitchHidden] = useState(false)
-
-  // Repeat/Pitch shared state
+  // Repeat shared state
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null)
@@ -162,7 +64,7 @@ export default function PracticeApp({ initialSentences }: Props) {
   const loopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const idxRef = useRef(0)
   const rateRef = useRef(0.9)
-  const voiceRef = useRef<SpeechSynthesisVoice | null>(null)
+  const voiceNameRef = useRef('ja-JP-Neural2-B')
   const sessionRef = useRef<RecordingSession | null>(null)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -175,7 +77,7 @@ export default function PracticeApp({ initialSentences }: Props) {
   isLoopingRef.current = isLooping
   idxRef.current = idx
   rateRef.current = rate
-  voiceRef.current = voices[voiceIdx] ?? null
+  voiceNameRef.current = voiceName
   heardRef.current = heard
   recordingUrlRef.current = recordingUrl
 
@@ -196,18 +98,7 @@ export default function PracticeApp({ initialSentences }: Props) {
 
   useEffect(() => {
     setMounted(true)
-    if (!isSpeechAvailable()) return
-
-    function loadVoices() {
-      const jaVoices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith('ja'))
-      setVoices(jaVoices)
-      setVoicesLoaded(true)
-    }
-    loadVoices()
-    speechSynthesis.addEventListener('voiceschanged', loadVoices)
-
     return () => {
-      speechSynthesis.removeEventListener('voiceschanged', loadVoices)
       stopSpeech()
       if (loopTimerRef.current) clearTimeout(loopTimerRef.current)
       if (sessionRef.current) sessionRef.current.stop().then((url) => URL.revokeObjectURL(url))
@@ -230,8 +121,8 @@ export default function PracticeApp({ initialSentences }: Props) {
     logSession({
       sessionKey,
       sentenceId: sentence.id,
-      mode,
-      matchScore: (mode === 'repeat' || mode === 'pitch') ? (heardRef.current?.score ?? null) : null,
+      mode: mode as 'shadow' | 'repeat' | 'pitch',
+      matchScore: mode === 'repeat' ? (heardRef.current?.score ?? null) : null,
     }).catch(() => { /* silent fail — không ảnh hưởng UX */ })
   }, [sessionKey, mode, initialSentences])
 
@@ -248,7 +139,6 @@ export default function PracticeApp({ initialSentences }: Props) {
     setIsPlayingBack(false)
     setMicError(null)
     setHeard(null)
-    setPitchHidden(false)
     hasInteractedRef.current = false
   }, [])
 
@@ -258,7 +148,7 @@ export default function PracticeApp({ initialSentences }: Props) {
     setIsPlaying(true)
     speak(initialSentences[i].jp, {
       rate: rateRef.current,
-      voice: voiceRef.current,
+      voice: voiceNameRef.current,
       onEnd: () => {
         setIsPlaying(false)
         if (isLoopingRef.current) {
@@ -294,7 +184,7 @@ export default function PracticeApp({ initialSentences }: Props) {
     setHeard(null)
     speak(initialSentences[idx].jp, {
       rate: rateRef.current,
-      voice: voiceRef.current,
+      voice: voiceNameRef.current,
       onEnd: () => setIsSpeaking(false),
     })
   }
@@ -367,6 +257,13 @@ export default function PracticeApp({ initialSentences }: Props) {
     setIdx((i) => (i + 1) % initialSentences.length)
   }
 
+  const handleJump = (i: number) => {
+    if (i === idx) return
+    maybeLog()
+    resetSentenceState()
+    setIdx(i)
+  }
+
   const handleMode = (m: Mode) => {
     maybeLog()
     resetSentenceState()
@@ -376,18 +273,16 @@ export default function PracticeApp({ initialSentences }: Props) {
   // Update keyboard handler every render — avoids stale closures in the global listener
   keyHandlerRef.current = (e: KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
+    if (mode === 'roleplay') return
     if (e.code === 'ArrowLeft') { e.preventDefault(); handlePrev() }
     else if (e.code === 'ArrowRight') { e.preventDefault(); handleNext() }
     else if (e.code === 'Space') {
       e.preventDefault()
       if (mode === 'shadow') handleShadowPlay()
-      else if ((mode === 'repeat' || mode === 'pitch') && !isSpeaking && !isRecording) handleRepeatListen()
-    } else if (e.code === 'KeyR' && (mode === 'repeat' || mode === 'pitch') && !isSpeaking) {
+      else if (mode === 'repeat' && !isSpeaking && !isRecording) handleRepeatListen()
+    } else if (e.code === 'KeyR' && mode === 'repeat' && !isSpeaking) {
       e.preventDefault()
       handleToggleRecording()
-    } else if (e.code === 'KeyH' && mode === 'pitch') {
-      e.preventDefault()
-      setPitchHidden(h => !h)
     }
   }
 
@@ -447,16 +342,18 @@ export default function PracticeApp({ initialSentences }: Props) {
         <button className={`tab${mode === 'repeat' ? ' active' : ''}`} onClick={() => handleMode('repeat')}>
           Nghe &amp; nói lại<span className="badge">có nhịp nghỉ</span>
         </button>
-        <button className={`tab${mode === 'pitch' ? ' active' : ''}`} onClick={() => handleMode('pitch')}>
-          Cao độ<span className="badge">高低アクセント</span>
-        </button>
-        <button className="tab" disabled>
-          Roleplay<span className="badge">giai đoạn 3</span>
+        <button className={`tab${mode === 'roleplay' ? ' active' : ''}`} onClick={() => handleMode('roleplay')}>
+          Roleplay<span className="badge">hội thoại</span>
         </button>
       </div>
 
+      {/* Roleplay Tab */}
+      {mode === 'roleplay' && (
+        <RoleplayTab rate={rate} voice={voiceName} />
+      )}
+
       {/* Card */}
-      <div className="card">
+      {mode !== 'roleplay' && <div className="card">
         {/* Progress */}
         <div className="progress">
           <span>
@@ -475,21 +372,13 @@ export default function PracticeApp({ initialSentences }: Props) {
                   key={i}
                   className={`dot${i === idx ? ' on' : ''}${done ? ' done' : ''}`}
                   title={done ? `Câu ${i + 1}: đã luyện` : `Câu ${i + 1}`}
+                  onClick={() => handleJump(i)}
+                  style={{ cursor: i === idx ? 'default' : 'pointer' }}
                 />
               )
             })}
           </div>
         </div>
-
-        {/* Pitch diagram nhỏ — chỉ hiện trong shadow/repeat */}
-        {mode !== 'pitch' && (
-          <>
-            {!sentence.pitch && (
-              <span className="pitch-demo-tag">Đường cao độ minh họa — thay bằng dữ liệu OJAD thật</span>
-            )}
-            <PitchSVG kana={sentence.kana} pitch={sentence.pitch} />
-          </>
-        )}
 
         {/* JP sentence */}
         <div className="jp">{sentence.jp}</div>
@@ -497,31 +386,8 @@ export default function PracticeApp({ initialSentences }: Props) {
         {/* Vietnamese meaning */}
         <div className={`meaning${hideVi ? ' hidden' : ''}`}>{sentence.meaning_vi}</div>
 
-        {/* Pitch diagram lớn — chỉ trong tab Cao độ */}
-        {mode === 'pitch' && (
-          <div className="pitch-section">
-            {!sentence.pitch ? (
-              <div className="pitch-demo-tag" style={{ display: 'block', marginBottom: 10 }}>
-                Chưa có dữ liệu OJAD — đang hiển thị mẫu heiban (bằng phẳng) · không dùng để học
-              </div>
-            ) : (
-              <div style={{ fontSize: 12, color: 'var(--good)', marginBottom: 8, fontWeight: 600 }}>
-                ✓ Dữ liệu cao độ đã xác minh
-              </div>
-            )}
-            <PitchDiagram kana={sentence.kana} pitch={sentence.pitch} hidden={pitchHidden} />
-            <button
-              className={`btn${pitchHidden ? ' btn-primary' : ''}`}
-              onClick={() => setPitchHidden(h => !h)}
-              style={{ marginTop: 10, fontSize: 13 }}
-            >
-              {pitchHidden ? '◉ Hiện đường pitch' : '○ Ẩn đường pitch (tự thử)'}
-            </button>
-          </div>
-        )}
-
         {/* Controls */}
-        <div className="controls" style={{ marginTop: mode === 'pitch' ? 14 : undefined }}>
+        <div className="controls">
           {mode === 'shadow' && (
             <>
               <button
@@ -562,31 +428,6 @@ export default function PracticeApp({ initialSentences }: Props) {
             </>
           )}
 
-          {mode === 'pitch' && (
-            <>
-              <button
-                className="btn btn-primary"
-                onClick={handleRepeatListen}
-                disabled={isSpeaking || isRecording}
-              >
-                {isSpeaking ? '▶ Đang phát...' : '▶ Nghe mẫu'}
-              </button>
-              <button
-                className={`btn btn-rec${isRecording ? ' recording' : ''}`}
-                onClick={handleToggleRecording}
-                disabled={!micOk || isSpeaking}
-              >
-                {isRecording ? '■ Dừng' : '● Ghi âm'}
-              </button>
-              <button
-                className="btn"
-                onClick={handlePlayback}
-                disabled={!recordingUrl || isPlayingBack}
-              >
-                {isPlayingBack ? '▶ Đang phát...' : '▶ Nghe lại'}
-              </button>
-            </>
-          )}
         </div>
 
         {/* Feedback */}
@@ -595,6 +436,7 @@ export default function PracticeApp({ initialSentences }: Props) {
           {!micOk && mode === 'repeat' && (
             <div className="warn">Trình duyệt này không hỗ trợ ghi âm. Hãy dùng Chrome/Edge.</div>
           )}
+
           {heard && (() => {
             const color = heard.score >= 80 ? 'var(--good)' : heard.score >= 50 ? '#c98a1a' : 'var(--accent)'
             return (
@@ -624,14 +466,11 @@ export default function PracticeApp({ initialSentences }: Props) {
           <kbd className="kbd">←</kbd><kbd className="kbd">→</kbd> chuyển câu
           &nbsp;·&nbsp;
           <kbd className="kbd">Space</kbd> phát/dừng
-          {(mode === 'repeat' || mode === 'pitch') && (
+          {mode === 'repeat' && (
             <>&nbsp;·&nbsp;<kbd className="kbd">R</kbd> ghi âm</>
           )}
-          {mode === 'pitch' && (
-            <>&nbsp;·&nbsp;<kbd className="kbd">H</kbd> ẩn/hiện pitch</>
-          )}
         </div>
-      </div>
+      </div>}
 
       {/* Settings */}
       <div className="settings">
@@ -645,14 +484,12 @@ export default function PracticeApp({ initialSentences }: Props) {
           />
         </div>
         <div className="row">
-          <label>Giọng đọc</label>
-          <select value={voiceIdx} onChange={(e) => setVoiceIdx(Number(e.target.value))}>
-            {!voicesLoaded
-              ? <option value={0}>Đang tải giọng đọc...</option>
-              : voices.length === 0
-              ? <option value={0}>(Không có giọng tiếng Nhật trên thiết bị này)</option>
-              : voices.map((v, i) => <option key={i} value={i}>{v.name} ({v.lang})</option>)
-            }
+          <label>Giọng đọc (Google Neural2)</label>
+          <select value={voiceName} onChange={(e) => setVoiceName(e.target.value)}>
+            <option value="ja-JP-Neural2-B">Nam · Neural2-B</option>
+            <option value="ja-JP-Neural2-D">Nam 2 · Neural2-D</option>
+            <option value="ja-JP-Neural2-A">Nữ · Neural2-A</option>
+            <option value="ja-JP-Neural2-C">Nữ 2 · Neural2-C</option>
           </select>
         </div>
         <div className="row">
@@ -661,6 +498,11 @@ export default function PracticeApp({ initialSentences }: Props) {
             <input type="checkbox" checked={hideVi} onChange={(e) => setHideVi(e.target.checked)} />
             <span className="slider" />
           </label>
+        </div>
+        <div style={{ marginTop: 12, textAlign: 'right' }}>
+          <Link href="/manage" style={{ fontSize: 12, color: 'var(--ink-soft)', textDecoration: 'none' }}>
+            Quản lý câu luyện
+          </Link>
         </div>
       </div>
     </div>

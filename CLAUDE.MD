@@ -8,13 +8,12 @@ Web app **luyện NÓI tiếng Nhật** cho người học trình độ **N3–N
 Trọng tâm là kỹ năng nói (không phải đọc/viết), theo vòng lặp cốt lõi:
 **nghe mẫu → nói theo → tự nghe lại giọng mình → so sánh → lặp lại.**
 
-Bốn phương pháp, làm theo **giai đoạn** (đừng làm hết cùng lúc):
-1. **Shadowing** — nghe và lặp lại tức thì, bám nhịp và ngữ điệu. *(Giai đoạn 1 — ✅ DONE)*
-2. **Nghe & nói lại** — cùng vòng lặp nhưng có nhịp nghỉ để lặp từng câu. *(Giai đoạn 1 — ✅ DONE)*
-3. **Pitch accent (高低アクセント)** — hiển thị đường cao độ H/L theo mora. *(Giai đoạn 2 — ✅ DONE, chờ dữ liệu OJAD thật)*
-4. **Roleplay hội thoại** — người dùng đóng vai trong tình huống, cần logic hội thoại động / LLM. *(Giai đoạn 3 — chưa làm)*
+Ba chế độ luyện tập hiện hoạt động:
+1. **Shadowing** — nghe và lặp lại tức thì, bám nhịp và ngữ điệu. *(✅ DONE)*
+2. **Nghe & nói lại** — có nhịp nghỉ để lặp từng câu, ghi âm + nhận dạng giọng. *(✅ DONE)*
+3. **Roleplay hội thoại** — hội thoại theo kịch bản scripted (5 tình huống), không dùng LLM. *(✅ DONE)*
 
-Khi được giao một task mơ hồ, ưu tiên phạm vi của giai đoạn hiện tại; hỏi lại nếu task thuộc giai đoạn sau.
+> Tab **Cao độ (高低アクセント)** đã bị xoá — dữ liệu pitch accent thật chưa có, hiển thị fake data gây hiểu nhầm.
 
 ## Tech stack
 
@@ -24,7 +23,8 @@ Khi được giao một task mơ hồ, ưu tiên phạm vi của giai đoạn hi
 - **Database:** Postgres trên **Neon** (serverless)
 - **DB access:** Drizzle ORM + `@neondatabase/serverless` (driver HTTP, hợp với môi trường serverless của Vercel)
 - **Styling:** Tailwind CSS + custom CSS classes trong `globals.css` (không có dark mode — thiết kế cố định)
-- **Giọng nói:** Web Speech API + MediaRecorder (client-side, xem phần Ràng buộc trình duyệt)
+- **TTS:** Google Cloud Text-to-Speech API (Neural2) qua route `/api/tts` — fallback về Web Speech API nếu `GOOGLE_TTS_API_KEY` chưa cấu hình
+- **Ghi âm:** MediaRecorder + SpeechRecognition (client-side)
 
 ## Lệnh thường dùng
 
@@ -37,33 +37,28 @@ npm run typecheck      # tsc --noEmit (chạy trước khi commit)
 # Database (Drizzle)
 npm run db:generate    # sinh migration từ schema
 npm run db:migrate     # áp migration lên Neon
-npm run db:seed        # seed 24 câu N3-N2 vào DB (xóa rồi insert lại)
+npm run db:seed        # seed câu luyện vào DB (xóa rồi insert lại)
 npm run db:studio      # mở Drizzle Studio xem dữ liệu
 ```
 
 > `drizzle.config.ts` dùng `loadEnvConfig` từ `@next/env` để tải `.env.local` khi chạy CLI — không cần export thủ công.
 
-> Nếu script chưa tồn tại trong `package.json`, tạo mới thay vì đoán lệnh.
+## Biến môi trường
+
+| Biến | Bắt buộc | Mô tả |
+|---|---|---|
+| `DATABASE_URL` | ✅ | Neon pooled connection string |
+| `GOOGLE_TTS_API_KEY` | Tuỳ chọn | Google Cloud TTS Neural2. Nếu thiếu, app fallback về Web Speech API |
 
 ## Ràng buộc trình duyệt — RẤT QUAN TRỌNG
 
 Các API giọng nói **chỉ chạy ở phía client**. Tuân thủ nghiêm để tránh lỗi build/runtime:
 
-- **Mọi component dùng `SpeechSynthesis`, `SpeechRecognition`, `MediaRecorder`, `AudioContext` phải là Client Component** (`'use client'`). Không bao giờ gọi các API này trong Server Component, Server Action, hay route handler.
+- **Mọi component dùng `SpeechRecognition`, `MediaRecorder`, `AudioContext` phải là Client Component** (`'use client'`). Không bao giờ gọi các API này trong Server Component, Server Action, hay route handler.
 - **`SpeechRecognition` chỉ hỗ trợ tốt trên Chrome/Edge** — dùng `window.SpeechRecognition ?? window.webkitSpeechRecognition`. Luôn **feature-detect** và có fallback rõ ràng.
-- **`SpeechSynthesis`**: danh sách giọng load bất đồng bộ — luôn xử lý `speechSynthesis.addEventListener('voiceschanged', ...)`. Chất lượng giọng ja-JP phụ thuộc OS người dùng.
+- **TTS** nay dùng Google Cloud qua fetch (`/api/tts`) — trả về MP3 blob, play bằng `new Audio()`. Không còn dùng `window.speechSynthesis` trực tiếp trong component (chỉ dùng làm fallback bên trong `tts.ts`).
 - **`MediaRecorder`**: cần quyền micro (`getUserMedia`) — luôn bọc `try/catch`. Gọi `stream.getTracks().forEach(t => t.stop())` khi dừng để tắt đèn micro.
 - **`window`/`navigator` không tồn tại khi SSR.** Truy cập trong `useEffect` hoặc sau khi kiểm tra `typeof window !== 'undefined'`.
-
-## Dữ liệu Pitch Accent — KHÔNG ĐƯỢC BỊA
-
-- Pitch accent tiếng Nhật là dữ liệu ngôn ngữ chính xác, **không được để TTS tự sinh rồi coi là đúng**, và **không được tự đoán**.
-- Nguồn chuẩn: **OJAD** (Online Japanese Accent Dictionary), từ điển **NHK 日本語発音アクセント辞典**, hoặc bộ dữ liệu Kanjium.
-- Lưu pitch dạng **mảng H/L theo từng mora** trong cột `pitch jsonb` của bảng `sentences`.
-- Nếu chưa có dữ liệu thật cho một câu (`pitch = null`), **đánh dấu rõ là placeholder/demo** trên UI — không hiển thị như dữ liệu chuẩn để người học tập theo.
-- **Hiện tại:** 24/24 câu có `pitch = null` → tab Cao độ hiển thị mẫu heiban với cảnh báo rõ ràng.
-- **Workflow nhập dữ liệu thật:** Tra OJAD → nhập mảng H/L vào `src/lib/db/seed.ts` → `npm run db:seed`.
-- Quy tắc tách mora: gộp âm nhỏ (ゃゅょ ぁぃぅぇぉ), tách riêng っ / ん / ー.
 
 ## Design System
 
@@ -78,8 +73,8 @@ Thiết kế dựa trên file tham chiếu `src/html-layout/japanese-speaking-pr
 | `--ink` | `#17233c` | Text chính, nút primary |
 | `--ink-soft` | `#5a667f` | Text phụ, label |
 | `--line` | `#d7dce4` | Border, divider |
-| `--accent` | `#d64933` | Nút ghi âm, đường pitch H, cảnh báo |
-| `--accent-soft` | `#f7ded8` | Background badge pitch demo |
+| `--accent` | `#d64933` | Nút ghi âm, cảnh báo |
+| `--accent-soft` | `#f7ded8` | Background error message |
 | `--good` | `#2f7d64` | Trạng thái khớp / đúng / câu đã luyện |
 | `--good-soft` | `#dcefe8` | Background feedback tốt |
 | `--radius` | `14px` | Border-radius mặc định |
@@ -93,19 +88,17 @@ Thiết kế dựa trên file tham chiếu `src/html-layout/japanese-speaking-pr
 - `.btn` — nút cơ bản (border, surface background)
 - `.btn-primary` — nút tối (`--ink` background, trắng text)
 - `.btn-rec` — nút ghi âm (`--accent` background); thêm class `recording` để kích hoạt animation pulse
-- `.tabs` / `.tab` / `.tab.active` — tab bar trong pill trắng (hiện có 4 tabs)
+- `.tabs` / `.tab` / `.tab.active` — tab bar trong pill trắng (3 tabs: Shadowing, Nghe & nói lại, Roleplay)
 - `.jp` — text tiếng Nhật (font serif, 27px, letter-spacing)
 - `.meaning` / `.meaning.hidden` — nghĩa tiếng Việt (có thể blur)
-- `.pitch-demo-tag` — badge cảnh báo dữ liệu pitch là demo
-- `.pitch-section` — container của PitchDiagram lớn trong tab Cao độ (bg, border, border-radius)
 - `.heard` / `.warn` — feedback sau ghi âm
 - `.settings` / `.row` — panel cài đặt
-- `.dot` / `.dot.on` / `.dot.done` — progress dots (xám / đỏ hiện tại / xanh đã luyện)
+- `.dot` / `.dot.on` / `.dot.done` — progress dots (xám / đỏ hiện tại / xanh đã luyện); click để nhảy tới câu đó
 - `.kbd-hint` / `.kbd` — gợi ý phím tắt ở cuối card
 
 ### Layout tổng thể
 
-Trang chính (`/`) là **single-page với 4 tabs**: Shadowing | Nghe & nói lại | Cao độ | Roleplay (disabled).
+Trang chính (`/`) là **single-page với 3 tabs**: Shadowing | Nghe & nói lại | Roleplay.
 Toàn bộ logic nằm trong `PracticeApp.tsx` — không dùng nhiều route riêng cho từng chế độ.
 
 ## Cấu trúc thư mục (thực tế hiện tại)
@@ -115,30 +108,39 @@ src/
   app/
     page.tsx              # Server Component, fetch sentences từ DB, render PracticeApp
                           # export const dynamic = 'force-dynamic' — bắt buộc để không cache
-    actions.ts            # Server Actions: logSession(), getSessionProgress()
+    actions.ts            # Server Actions: logSession, getSessionProgress, addSentence,
+                          #   updateSentence, deleteSentence
     layout.tsx            # metadata, font Geist
     globals.css           # design tokens + custom CSS classes
-    (practice)/           # routes phụ (shadowing/, repeat/) — vẫn hoạt động qua URL trực tiếp
+    add/
+      page.tsx            # Form thêm câu luyện mới → /add
+    manage/
+      page.tsx            # Danh sách câu luyện + Edit/Delete → /manage
+      DeleteButton.tsx    # 'use client' — nút xoá câu với confirm dialog
+      [id]/
+        page.tsx          # Server Component fetch câu theo id, render EditForm
+        EditForm.tsx      # 'use client' — form sửa câu luyện
+    api/
+      tts/
+        route.ts          # GET /api/tts?text=...&rate=...&voice=... → MP3 từ Google Cloud TTS
   components/
     practice/
-      PracticeApp.tsx     # 'use client' — toàn bộ app (tabs, state, TTS, recorder, pitch)
-                          # chứa cả PitchSVG (nhỏ) và PitchDiagram (lớn, tab Cao độ)
-      ShadowingPlayer.tsx # dùng bởi route /shadowing (legacy)
-      RepeatPlayer.tsx    # dùng bởi route /repeat (legacy)
-      SentenceCard.tsx    # display component (legacy)
+      PracticeApp.tsx     # 'use client' — toàn bộ app (tabs, state, TTS, recorder)
+      RoleplayTab.tsx     # 'use client' — tab hội thoại kịch bản
   hooks/
     useSessionKey.ts      # trả về UUID từ localStorage (anonymous tracking, không cần auth)
   data/
-    sentences.ts          # 10 câu N3-N2 cũ — CHỈ dùng bởi legacy routes /shadowing /repeat
-                          # trang chính đọc từ DB, KHÔNG dùng file này
+    sentences.ts          # 10 câu N3-N2 cũ — CHỈ dùng bởi legacy routes (không dùng ở trang chính)
+    roleplay-scenarios.ts # 5 kịch bản roleplay hardcode — xem hướng dẫn thêm kịch bản bên dưới
   lib/
     speech/
       tts.ts              # speak(), stopSpeech(), isSpeechAvailable()
+                          # Gọi /api/tts để lấy MP3, fallback về Web Speech API nếu lỗi
       recorder.ts         # startRecording(), isRecordingSupported()
     db/
       schema.ts           # Drizzle schema: sentences + practice_sessions
       index.ts            # kết nối Neon: neon() + drizzle()
-      seed.ts             # 24 câu N3-N2 — chạy: npm run db:seed
+      seed.ts             # câu luyện N3-N2 — chạy: npm run db:seed
       migrations/         # SQL migrations (tự generate, không sửa tay)
   types/
     speech-recognition.d.ts  # type stubs cho SpeechRecognition / webkitSpeechRecognition
@@ -163,14 +165,82 @@ grammar_point text, created_at timestamp
 
 // practice_sessions
 id serial PK, session_key varchar(64), sentence_id int FK→sentences,
-mode varchar(20),   // 'shadow' | 'repeat' | 'pitch'
+mode varchar(20),   // 'shadow' | 'repeat'
 match_score int,    // Levenshtein similarity 0-100, null cho shadow
 created_at timestamp
 ```
 
+> Cột `pitch` trong `sentences` vẫn tồn tại trong schema (cho furigana / pitch accent tương lai) nhưng không hiển thị trên UI hiện tại. Tất cả các câu hiện có `pitch = null`.
+
 Chưa có bảng `users` hay `progress` — dùng `session_key` (localStorage UUID) để track anonymous.
 
-> Không lưu file ghi âm giọng người dùng lên DB. Nếu cần lưu, dùng blob storage riêng và cân nhắc quyền riêng tư — hỏi trước khi thêm.
+## Quản lý câu luyện (CRUD)
+
+Truy cập từ trang chính → Cài đặt → **"Quản lý câu luyện"** → `/manage`.
+
+- **Thêm câu:** `/add` — điền JP, kana (tuỳ chọn, fallback về JP), nghĩa Việt, cấp độ, ngữ pháp
+- **Sửa câu:** `/manage/[id]` — form pre-fill sẵn dữ liệu
+- **Xoá câu:** nút Xoá trên `/manage` — có confirm dialog, xoá cascade cả `practice_sessions`
+
+## Thêm kịch bản Roleplay
+
+Roleplay scenarios được hardcode trong `src/data/roleplay-scenarios.ts`. **Không lưu trong DB.**
+
+### Cách thêm kịch bản mới
+
+1. Mở `src/data/roleplay-scenarios.ts`
+2. Thêm một object mới vào mảng `SCENARIOS`:
+
+```ts
+{
+  id: 'ten-id-duy-nhat',       // snake_case, không trùng với kịch bản khác
+  title_jp: '郵便局で荷物を送る',  // tiêu đề tiếng Nhật
+  title_vi: 'Gửi bưu kiện ở bưu điện',
+  npc_label: '局員',            // vai NPC (hiển thị trên badge)
+  user_label: 'お客様',          // vai người dùng
+  setting_vi: 'Bạn cần gửi một gói hàng về Việt Nam.',
+  turns: [
+    {
+      role: 'npc',
+      jp: 'いらっしゃいませ。どのようなご用件でしょうか？',
+      hint_vi: 'Xin chào. Tôi có thể giúp gì cho bạn?',
+      // NPC turns không có example
+    },
+    {
+      role: 'user',
+      jp: 'ベトナムに荷物を送りたいんですが。',
+      hint_vi: 'Nói bạn muốn gửi hàng đi Việt Nam.',
+      example: 'ベトナムに荷物を送りたいんですが。', // câu mẫu hiển thị khi bấm "Xem câu mẫu"
+    },
+    // ... thêm turns xen kẽ npc / user
+  ],
+}
+```
+
+### Quy tắc viết turns
+
+| Trường | NPC turn | User turn |
+|---|---|---|
+| `role` | `'npc'` | `'user'` |
+| `jp` | Câu NPC nói (TTS sẽ đọc) | Câu mẫu người dùng nên nói |
+| `hint_vi` | Bản dịch tiếng Việt | Gợi ý ngữ cảnh / cần nói gì |
+| `example` | Không có | Câu mẫu (ẩn cho đến khi bấm "Xem câu mẫu") |
+
+- Bắt đầu bằng NPC turn để NPC mở đầu hội thoại
+- Xen kẽ NPC / user; kết thúc bằng NPC turn (cảm ơn, tạm biệt) là tự nhiên nhất
+- Độ dài lý tưởng: 5–8 turns (~3–4 cặp hỏi-đáp)
+- Cấp độ N3–N2: tránh N1 grammar, tránh quá đơn giản (N5)
+- **Không bịa câu Nhật** — kiểm tra qua từ điển hoặc người bản ngữ trước khi thêm
+
+### 5 kịch bản hiện có
+
+| ID | Tiếng Nhật | Tiếng Việt |
+|---|---|---|
+| `restaurant` | レストランで注文する | Gọi món ở nhà hàng |
+| `station` | 駅で切符を買う | Mua vé tàu ở ga |
+| `convenience-store` | コンビニで買い物する | Mua đồ ở cửa hàng tiện lợi |
+| `hospital` | 病院で診察を受ける | Khám bệnh ở bệnh viện |
+| `self-intro` | 職場での自己紹介 | Tự giới thiệu ở công ty |
 
 ## Session tracking (anonymous, không cần auth)
 
@@ -181,14 +251,12 @@ Chưa có bảng `users` hay `progress` — dùng `session_key` (localStorage UU
 
 ## Các pattern quan trọng trong PracticeApp.tsx
 
-### Stale closure với event listener / setInterval
+### Stale closure với event listener
 Dùng **ref pattern**: tạo `keyHandlerRef` / `isLoopingRef` / `idxRef` v.v., cập nhật `.current` mỗi render, đăng ký event listener một lần trong `useEffect([], [])`.
 
 ```ts
 const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {})
-// Mỗi render: cập nhật ref để handler luôn dùng giá trị mới nhất
-keyHandlerRef.current = (e) => { /* ... dùng state/props mới nhất ... */ }
-// Effect chỉ chạy 1 lần:
+keyHandlerRef.current = (e) => { /* dùng state/props mới nhất */ }
 useEffect(() => {
   const h = (e: KeyboardEvent) => keyHandlerRef.current(e)
   window.addEventListener('keydown', h)
@@ -202,27 +270,29 @@ const [mounted, setMounted] = useState(false)
 useEffect(() => setMounted(true), [])
 if (!mounted) return <Skeleton />
 ```
-Không truy cập `window` / `speechSynthesis` / `navigator` ngoài `useEffect`.
+Không truy cập `window` / `navigator` ngoài `useEffect`.
 
-### Pitch components
-- `PitchSVG` — nhỏ, chỉ đường + mora, dùng trong tab Shadowing/Repeat
-- `PitchDiagram` — lớn, H=đỏ/L=xám, guide lines, H/L label, blur khi `hidden=true`, dùng trong tab Cao độ
+### TTS (speak function)
+`speak(text, { rate, voice, onEnd })` trong `tts.ts`:
+- Gọi `fetch('/api/tts?text=...&rate=...&voice=...')` → nhận MP3 blob → play bằng `new Audio()`
+- Nếu fetch thất bại (API key chưa có, offline...) → fallback về `speechSynthesis`
+- `stopSpeech()` dừng cả `currentAudio` lẫn `speechSynthesis`
+- `voice` là string tên giọng Neural2, ví dụ `'ja-JP-Neural2-B'`
 
-### Keyboard shortcuts (toàn app)
+### Keyboard shortcuts (shadow/repeat mode)
 | Phím | Tác dụng |
 |---|---|
-| `←` / `→` | Chuyển câu |
-| `Space` | Phát/dừng TTS (shadow) hoặc nghe mẫu (repeat/pitch) |
-| `R` | Ghi âm / dừng ghi (repeat + pitch) |
-| `H` | Ẩn/hiện đường pitch (chỉ tab Cao độ) |
+| `←` / `→` | Chuyển câu (disabled khi ở tab Roleplay) |
+| `Space` | Phát/dừng TTS (shadow) hoặc nghe mẫu (repeat) |
+| `R` | Ghi âm / dừng ghi (repeat) |
 
 ## Deploy (Vercel)
 
 - Deploy tự động khi push lên `main`.
-- **Biến môi trường** đặt trong Vercel Project Settings (và `.env.local` khi dev): `DATABASE_URL`.
+- **Biến môi trường** đặt trong Vercel Project Settings (và `.env.local` khi dev): `DATABASE_URL`, `GOOGLE_TTS_API_KEY`.
 - **Không commit** `.env*` chứa secret. Giữ `.env.example` làm mẫu.
 - Migration DB không tự chạy khi deploy — chạy `db:migrate` chủ động trước/sau khi deploy.
-- `page.tsx` có `export const dynamic = 'force-dynamic'` — bắt buộc để route không bị static cache, đảm bảo fetch DB mỗi request.
+- `page.tsx` có `export const dynamic = 'force-dynamic'` — bắt buộc để route không bị static cache.
 
 ## Quy ước code
 
@@ -235,14 +305,14 @@ Không truy cập `window` / `speechSynthesis` / `navigator` ngoài `useEffect`.
 
 **NÊN**
 - Feature-detect mọi API trình duyệt và có fallback rõ ràng.
-- Đánh dấu dữ liệu pitch null là placeholder/demo — không hiển thị như dữ liệu chuẩn.
-- Hỏi lại khi task thuộc giai đoạn chưa tới (ví dụ roleplay — Giai đoạn 3).
 - Dùng ref pattern khi cần tránh stale closure trong event listeners.
+- Khi sửa TTS: nhớ cập nhật cả `PracticeApp.tsx` lẫn `RoleplayTab.tsx` vì cả hai đều gọi `speak()`.
+- Khi thêm kịch bản roleplay: kiểm tra câu Nhật với người bản ngữ trước khi commit.
 
 **KHÔNG NÊN**
 - Gọi API audio/micro trong Server Component hoặc lúc SSR.
-- Bịa pitch accent hoặc coi kết quả TTS là chuẩn phát âm.
-- Coi độ khớp văn bản (Levenshtein) là "chấm phát âm" — nó chỉ kiểm tra đúng *từ*, không đánh giá phát âm/pitch thật. Muốn chấm phát âm thật cần dịch vụ chuyên biệt (ví dụ Azure Pronunciation Assessment) + backend.
+- Coi độ khớp văn bản (Levenshtein) là "chấm phát âm" — nó chỉ kiểm tra đúng *từ*, không đánh giá phát âm thật.
 - Hardcode secret hoặc connection string.
 - Sửa SQL migration bằng tay — luôn dùng `db:generate` + `db:migrate`.
 - Dùng `data/sentences.ts` làm nguồn dữ liệu cho trang chính — trang chính đọc từ DB.
+- Thêm kịch bản roleplay với câu Nhật chưa được kiểm chứng.

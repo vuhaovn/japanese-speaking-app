@@ -1,64 +1,64 @@
-// Only call these functions from browser context (event handlers, useEffect)
+let currentAudio: HTMLAudioElement | null = null
 
-function waitForVoices(): Promise<SpeechSynthesisVoice[]> {
-  const synth = window.speechSynthesis
-  const existing = synth.getVoices()
-  if (existing.length > 0) return Promise.resolve(existing)
-
-  return new Promise((resolve) => {
-    // Safari may never fire voiceschanged — fall back after 1s
-    const timeout = setTimeout(() => {
-      synth.removeEventListener('voiceschanged', onChanged)
-      resolve(synth.getVoices())
-    }, 1000)
-    function onChanged() {
-      clearTimeout(timeout)
-      synth.removeEventListener('voiceschanged', onChanged)
-      resolve(synth.getVoices())
-    }
-    synth.addEventListener('voiceschanged', onChanged)
-  })
-}
-
-export async function speak(
+export function speak(
   text: string,
-  options?: {
-    rate?: number
-    voice?: SpeechSynthesisVoice | null
-    onStart?: () => void
-    onEnd?: () => void
-  }
-): Promise<void> {
-  const synth = window.speechSynthesis
-  synth.cancel()
+  options: { rate?: number; voice?: string; onEnd?: () => void } = {}
+): void {
+  stopSpeech()
 
-  const voices = await waitForVoices()
-  const voice = options?.voice ?? voices.find((v) => v.lang.startsWith('ja')) ?? null
+  void (async () => {
+    try {
+      const params = new URLSearchParams({ text, rate: String(options.rate ?? 1) })
+      if (options.voice) params.set('voice', options.voice)
 
-  return new Promise((resolve) => {
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.lang = 'ja-JP'
-    utterance.rate = options?.rate ?? 0.85
+      const res = await fetch(`/api/tts?${params}`)
+      if (!res.ok) throw new Error(`TTS ${res.status}`)
 
-    if (voice) utterance.voice = voice
-    if (options?.onStart) utterance.onstart = () => options.onStart!()
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      currentAudio = audio
 
-    utterance.onend = () => {
-      options?.onEnd?.()
-      resolve()
+      audio.onended = () => {
+        URL.revokeObjectURL(url)
+        currentAudio = null
+        options.onEnd?.()
+      }
+      audio.onerror = () => {
+        URL.revokeObjectURL(url)
+        currentAudio = null
+        options.onEnd?.()
+      }
+
+      await audio.play()
+    } catch {
+      // Fallback to Web Speech API nếu cloud TTS không khả dụng
+      if (typeof speechSynthesis !== 'undefined') {
+        const utt = new SpeechSynthesisUtterance(text)
+        utt.lang = 'ja-JP'
+        utt.rate = options.rate ?? 1
+        utt.onend = () => options.onEnd?.()
+        utt.onerror = () => options.onEnd?.()
+        speechSynthesis.speak(utt)
+      } else {
+        options.onEnd?.()
+      }
     }
-    utterance.onerror = () => resolve()
-
-    synth.speak(utterance)
-  })
+  })()
 }
 
 export function stopSpeech(): void {
-  if (typeof window !== 'undefined') {
-    window.speechSynthesis.cancel()
+  if (currentAudio) {
+    currentAudio.pause()
+    currentAudio.onended = null
+    currentAudio.onerror = null
+    currentAudio = null
+  }
+  if (typeof speechSynthesis !== 'undefined') {
+    speechSynthesis.cancel()
   }
 }
 
 export function isSpeechAvailable(): boolean {
-  return typeof window !== 'undefined' && 'speechSynthesis' in window
+  return true
 }
