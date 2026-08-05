@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>発声練習 — Luyện nói tiếng Nhật</title>
+<style>
+  /* ---- Design tokens ---- */
+  :root{
+    --bg:#e9edf2;          /* giấy xanh xám lạnh */
+    --surface:#ffffff;
+    --ink:#17233c;         /* mực chàm đậm (藍) */
+    --ink-soft:#5a667f;
+    --line:#d7dce4;
+    --accent:#d64933;      /* son / 朱 — dùng cho ghi âm + đường pitch */
+    --accent-soft:#f7ded8;
+    --good:#2f7d64;        /* xanh rêu — khi khớp */
+    --good-soft:#dcefe8;
+    --radius:14px;
+    --jp-serif:"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;
+    --ui:system-ui,-apple-system,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:var(--ui);
+    background:var(--bg);
+    color:var(--ink);
+    line-height:1.5;
+    min-height:100vh;
+    display:flex;justify-content:center;
+    padding:24px 16px 64px;
+  }
+  .app{width:100%;max-width:620px}
+
+  /* ---- Header ---- */
+  header{margin-bottom:20px}
+  .brand{display:flex;align-items:baseline;gap:12px}
+  .brand h1{font-family:var(--jp-serif);font-size:30px;letter-spacing:.04em;font-weight:600}
+  .brand .sub{font-size:13px;color:var(--ink-soft)}
+  .tagline{font-size:13px;color:var(--ink-soft);margin-top:4px}
+
+  /* ---- Mode tabs ---- */
+  .tabs{display:flex;gap:4px;margin:18px 0;background:var(--surface);
+    border:1px solid var(--line);border-radius:var(--radius);padding:4px}
+  .tab{flex:1;border:none;background:none;font-family:var(--ui);font-size:13.5px;
+    padding:9px 8px;border-radius:10px;cursor:pointer;color:var(--ink-soft);font-weight:500}
+  .tab.active{background:var(--ink);color:#fff}
+  .tab:disabled{opacity:.4;cursor:not-allowed}
+  .tab .badge{font-size:10px;display:block;opacity:.7}
+
+  /* ---- Card ---- */
+  .card{background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--radius);padding:24px 22px;box-shadow:0 1px 2px rgba(23,35,60,.04)}
+
+  .progress{display:flex;justify-content:space-between;align-items:center;
+    font-size:12px;color:var(--ink-soft);margin-bottom:18px}
+  .dots{display:flex;gap:6px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--line)}
+  .dot.on{background:var(--accent)}
+
+  /* pitch + kana */
+  .pitch-wrap{overflow-x:auto;padding:6px 0 2px;margin-bottom:2px}
+  .pitch-demo-tag{font-size:11px;color:var(--accent);background:var(--accent-soft);
+    display:inline-block;padding:2px 8px;border-radius:20px;margin-bottom:10px}
+  svg.pitch{display:block}
+  svg.pitch .mora{font-family:var(--jp-serif);font-size:19px;fill:var(--ink)}
+  svg.pitch .pline{stroke:var(--accent);stroke-width:2;fill:none}
+  svg.pitch .pdot{fill:var(--accent)}
+
+  .jp{font-family:var(--jp-serif);font-size:27px;line-height:1.7;margin:6px 0 14px;letter-spacing:.02em}
+  .meaning{font-size:15px;color:var(--ink-soft);border-left:3px solid var(--line);
+    padding-left:12px;margin-bottom:20px}
+  .meaning.hidden{filter:blur(6px);user-select:none}
+
+  /* controls */
+  .controls{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px}
+  button.act{font-family:var(--ui);font-size:14px;font-weight:500;cursor:pointer;
+    border:1px solid var(--line);background:var(--surface);color:var(--ink);
+    padding:11px 16px;border-radius:10px;display:inline-flex;align-items:center;gap:8px;transition:.15s}
+  button.act:hover{border-color:var(--ink-soft)}
+  button.act:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  button.rec{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button.rec.recording{animation:pulse 1.1s infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 7px var(--accent-soft)}}
+
+  /* feedback */
+  .feedback{margin-top:16px;font-size:14px;min-height:22px}
+  .heard{background:var(--good-soft);border-radius:10px;padding:12px 14px;margin-top:12px}
+  .heard .label{font-size:12px;color:var(--good);font-weight:600;margin-bottom:4px;letter-spacing:.03em}
+  .heard .txt{font-family:var(--jp-serif);font-size:18px}
+  .score{font-weight:600}
+  .warn{color:var(--accent);font-size:12.5px;margin-top:10px}
+
+  /* nav */
+  .nav{display:flex;justify-content:space-between;margin-top:22px;gap:10px}
+  .nav button{flex:1}
+
+  /* settings */
+  .settings{margin-top:18px;background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--radius);padding:16px 20px;font-size:13.5px}
+  .settings h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--ink-soft);margin-bottom:12px;font-weight:600}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+  .row:last-child{margin-bottom:0}
+  input[type=range]{accent-color:var(--accent)}
+  select{font-family:var(--ui);padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);max-width:220px}
+  .switch{position:relative;width:42px;height:24px}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;background:var(--line);border-radius:24px;transition:.2s;cursor:pointer}
+  .slider:before{content:"";position:absolute;height:18px;width:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+  .switch input:checked + .slider{background:var(--ink)}
+  .switch input:checked + .slider:before{transform:translateX(18px)}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <h1>発声練習</h1>
+      <span class="sub">hassei renshū · luyện nói</span>
+    </div>
+    <p class="tagline">Nghe mẫu → nói theo → nghe lại giọng mình. Vòng lặp cốt lõi cho trình độ N3–N2.</p>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" data-mode="shadow">Shadowing<span class="badge">nói theo tức thì</span></button>
+    <button class="tab" data-mode="repeat">Nghe &amp; nói lại<span class="badge">có nhịp nghỉ</span></button>
+    <button class="tab" disabled>Roleplay<span class="badge">giai đoạn 2</span></button>
+  </div>
+
+  <div class="card">
+    <div class="progress">
+      <span id="counter">Câu 1 / 4</span>
+      <div class="dots" id="dots"></div>
+    </div>
+
+    <span class="pitch-demo-tag">Đường cao độ minh họa — thay bằng dữ liệu OJAD thật</span>
+    <div class="pitch-wrap"><svg class="pitch" id="pitch" height="70"></svg></div>
+
+    <div class="jp" id="jp"></div>
+    <div class="meaning" id="meaning"></div>
+
+    <div class="controls">
+      <button class="act primary" id="btnPlay">▶ Nghe mẫu</button>
+      <button class="act rec" id="btnRec">● Ghi âm</button>
+      <button class="act" id="btnPlayback" disabled>▶ Nghe lại giọng mình</button>
+    </div>
+
+    <div class="feedback" id="feedback"></div>
+
+    <div class="nav">
+      <button class="act" id="btnPrev">← Câu trước</button>
+      <button class="act" id="btnNext">Câu sau →</button>
+    </div>
+  </div>
+
+  <div class="settings">
+    <h3>Cài đặt</h3>
+    <div class="row">
+      <label for="rate">Tốc độ đọc mẫu</label>
+      <input type="range" id="rate" min="0.5" max="1.2" step="0.1" value="0.9">
+    </div>
+    <div class="row">
+      <label for="voice">Giọng đọc</label>
+      <select id="voice"></select>
+    </div>
+    <div class="row">
+      <label for="hide">Ẩn nghĩa tiếng Việt (tự thử thách)</label>
+      <label class="switch"><input type="checkbox" id="hide"><span class="slider"></span></label>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   DỮ LIỆU CÂU LUYỆN (N3)
+   - jp: câu hiển thị
+   - kana: cách đọc (dùng cho TTS + tách mora vẽ pitch)
+   - vi: nghĩa tiếng Việt
+   Ghi chú: pitch ở prototype này được sinh tự động kiểu heiban
+   (mora đầu thấp, còn lại cao) chỉ để MINH HỌA giao diện.
+   Khi làm thật, thay bằng mảng H/L lấy từ OJAD / từ điển NHK.
+   ========================================================= */
+const SENTENCES = [
+  { jp:"最近、仕事が忙しくて、なかなか休めないんです。",
+    kana:"さいきんしごとがいそがしくてなかなかやすめないんです",
+    vi:"Dạo này công việc bận quá, mãi chẳng nghỉ ngơi được." },
+  { jp:"この漢字の読み方が分からないので、教えてもらえますか。",
+    kana:"このかんじのよみかたがわからないのでおしえてもらえますか",
+    vi:"Mình không biết cách đọc chữ Hán này, chỉ giúp mình được không?" },
+  { jp:"明日までにレポートを出さなければなりません。",
+    kana:"あしたまでにレポートをださなければなりません",
+    vi:"Đến mai là phải nộp báo cáo rồi." },
+  { jp:"日本語で自分の意見をはっきり言えるようになりたいです。",
+    kana:"にほんごでじぶんのいけんをはっきりいえるようになりたいです",
+    vi:"Mình muốn nói rõ được ý kiến của mình bằng tiếng Nhật." },
+];
+
+/* ---- Tách kana thành mora (gộp âm nhỏ ゃゅょ, tách っ ん ー) ---- */
+const SMALL = "ゃゅょぁぃぅぇぉャュョァィゥェォゎヮ";
+function toMoras(kana){
+  const out=[];
+  for(const ch of kana){
+    if(SMALL.includes(ch) && out.length) out[out.length-1]+=ch;
+    else out.push(ch);
+  }
+  return out;
+}
+/* pitch minh họa: heiban (mora đầu L, còn lại H) */
+function demoPitch(n){ return Array.from({length:n},(_,i)=> i===0?"L":"H"); }
+
+/* =========================================================
+   VẼ PITCH bằng SVG
+   ========================================================= */
+function drawPitch(kana){
+  const moras=toMoras(kana), pitch=demoPitch(moras.length);
+  const svg=document.getElementById("pitch");
+  svg.innerHTML="";
+  const stepX=30, padX=14, hiY=20, loY=48, r=4;
+  const width=padX*2 + stepX*(moras.length-1);
+  svg.setAttribute("width",width);
+  svg.setAttribute("viewBox",`0 0 ${width} 70`);
+  const pts=moras.map((m,i)=>({x:padX+i*stepX, y:pitch[i]==="H"?hiY:loY, m}));
+  // đường nối
+  const path=pts.map((p,i)=>(i?"L":"M")+p.x+" "+p.y).join(" ");
+  const line=document.createElementNS("http://www.w3.org/2000/svg","path");
+  line.setAttribute("d",path); line.setAttribute("class","pline"); svg.appendChild(line);
+  // chấm + chữ mora
+  pts.forEach(p=>{
+    const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
+    c.setAttribute("cx",p.x);c.setAttribute("cy",p.y);c.setAttribute("r",r);c.setAttribute("class","pdot");
+    svg.appendChild(c);
+    const t=document.createElementNS("http://www.w3.org/2000/svg","text");
+    t.setAttribute("x",p.x);t.setAttribute("y",66);t.setAttribute("text-anchor","middle");
+    t.setAttribute("class","mora");t.textContent=p.m;
+    svg.appendChild(t);
+  });
+}
+
+/* =========================================================
+   STATE + RENDER
+   ========================================================= */
+let idx=0, mode="shadow";
+let jpVoice=null, mediaRecorder=null, chunks=[], lastAudioURL=null;
+
+function render(){
+  const s=SENTENCES[idx];
+  document.getElementById("jp").textContent=s.jp;
+  document.getElementById("meaning").textContent=s.vi;
+  document.getElementById("counter").textContent=`Câu ${idx+1} / ${SENTENCES.length}`;
+  drawPitch(s.kana);
+  // dots
+  const dots=document.getElementById("dots"); dots.innerHTML="";
+  SENTENCES.forEach((_,i)=>{const d=document.createElement("div");
+    d.className="dot"+(i===idx?" on":"");dots.appendChild(d);});
+  // reset feedback + playback
+  document.getElementById("feedback").innerHTML="";
+  document.getElementById("btnPlayback").disabled=!lastAudioURL;
+  applyHide();
+}
+function applyHide(){
+  document.getElementById("meaning").classList.toggle("hidden",
+    document.getElementById("hide").checked);
+}
+
+/* =========================================================
+   PHÁT MẪU (SpeechSynthesis)
+   ========================================================= */
+function loadVoices(){
+  const voices=speechSynthesis.getVoices().filter(v=>v.lang.startsWith("ja"));
+  const sel=document.getElementById("voice"); sel.innerHTML="";
+  if(!voices.length){
+    const o=document.createElement("option");o.textContent="(máy chưa có giọng tiếng Nhật)";sel.appendChild(o);
+    return;
+  }
+  voices.forEach((v,i)=>{const o=document.createElement("option");
+    o.value=i;o.textContent=`${v.name} (${v.lang})`;sel.appendChild(o);});
+  jpVoice=voices[0];
+  sel.onchange=()=>{jpVoice=voices[sel.value];};
+}
+speechSynthesis.onvoiceschanged=loadVoices; loadVoices();
+
+function speak(){
+  const s=SENTENCES[idx];
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(s.jp);
+  u.lang="ja-JP";
+  u.rate=parseFloat(document.getElementById("rate").value);
+  if(jpVoice) u.voice=jpVoice;
+  speechSynthesis.speak(u);
+}
+
+/* =========================================================
+   GHI ÂM (MediaRecorder) + NHẬN DIỆN (SpeechRecognition)
+   ========================================================= */
+const btnRec=document.getElementById("btnRec");
+const btnPlayback=document.getElementById("btnPlayback");
+const feedback=document.getElementById("feedback");
+let recognizing=false, recognition=null;
+
+// chuẩn bị nhận diện giọng nếu trình duyệt hỗ trợ
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+if(SR){
+  recognition=new SR();
+  recognition.lang="ja-JP";
+  recognition.interimResults=false;
+  recognition.maxAlternatives=1;
+}
+
+async function startRecording(){
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    chunks=[];
+    mediaRecorder=new MediaRecorder(stream);
+    mediaRecorder.ondataavailable=e=>chunks.push(e.data);
+    mediaRecorder.onstop=()=>{
+      const blob=new Blob(chunks,{type:"audio/webm"});
+      if(lastAudioURL) URL.revokeObjectURL(lastAudioURL);
+      lastAudioURL=URL.createObjectURL(blob);
+      btnPlayback.disabled=false;
+      stream.getTracks().forEach(t=>t.stop());
+    };
+    mediaRecorder.start();
+    btnRec.classList.add("recording");
+    btnRec.textContent="■ Dừng";
+    // song song: chấm từ đã nói
+    if(recognition){ startRecognition(); }
+    else feedback.innerHTML='<div class="warn">Trình duyệt này không hỗ trợ nhận diện giọng nói. Hãy dùng Chrome/Edge để có phần chấm điểm.</div>';
+  }catch(err){
+    feedback.innerHTML='<div class="warn">Không truy cập được micro: '+err.message+'</div>';
+  }
+}
+function stopRecording(){
+  if(mediaRecorder&&mediaRecorder.state!=="inactive") mediaRecorder.stop();
+  if(recognition&&recognizing) recognition.stop();
+  btnRec.classList.remove("recording");
+  btnRec.textContent="● Ghi âm";
+}
+btnRec.onclick=()=>{
+  if(mediaRecorder&&mediaRecorder.state==="recording") stopRecording();
+  else startRecording();
+};
+btnPlayback.onclick=()=>{ if(lastAudioURL) new Audio(lastAudioURL).play(); };
+
+/* ---- Nhận diện + chấm điểm khớp ---- */
+function startRecognition(){
+  recognizing=true;
+  recognition.onresult=e=>{
+    const heard=e.results[0][0].transcript;
+    showScore(heard);
+  };
+  recognition.onerror=e=>{ /* im lặng, đã có bản ghi âm để nghe lại */ };
+  recognition.onend=()=>{recognizing=false;};
+  try{ recognition.start(); }catch(_){}
+}
+// so khớp thô: bỏ dấu câu, so ký tự chung
+function showScore(heard){
+  const target=SENTENCES[idx].jp.replace(/[、。？！\s]/g,"");
+  const said=heard.replace(/[、。？！\s]/g,"");
+  const score=similarity(said,target);
+  const color=score>=80?"var(--good)":score>=50?"#c98a1a":"var(--accent)";
+  feedback.innerHTML=
+    `<div class="heard"><div class="label">MÁY NGHE ĐƯỢC</div>
+       <div class="txt">${heard}</div>
+       <div style="margin-top:8px">Độ khớp: <span class="score" style="color:${color}">${score}%</span></div>
+     </div>`;
+}
+// Levenshtein → % giống
+function similarity(a,b){
+  const m=a.length,n=b.length;
+  if(!m||!n) return 0;
+  const d=Array.from({length:m+1},(_,i)=>[i,...Array(n).fill(0)]);
+  for(let j=0;j<=n;j++) d[0][j]=j;
+  for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)
+    d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
+  return Math.round((1-d[m][n]/Math.max(m,n))*100);
+}
+
+/* =========================================================
+   ĐIỀU HƯỚNG + TABS + SETTINGS
+   ========================================================= */
+document.getElementById("btnPlay").onclick=speak;
+document.getElementById("btnPrev").onclick=()=>{idx=(idx-1+SENTENCES.length)%SENTENCES.length;lastAudioURL=null;render();};
+document.getElementById("btnNext").onclick=()=>{idx=(idx+1)%SENTENCES.length;lastAudioURL=null;render();};
+document.getElementById("hide").onchange=applyHide;
+document.querySelectorAll(".tab[data-mode]").forEach(t=>{
+  t.onclick=()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+    t.classList.add("active");
+    mode=t.dataset.mode;
+    // Ở chế độ "Nghe & nói lại": tự phát mẫu khi mở câu mới (có nhịp nghỉ)
+  };
+});
+
+render();
+</script>
+</body>
+</html>
