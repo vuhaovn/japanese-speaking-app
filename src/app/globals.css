@@ -45,8 +45,8 @@ body {
   border: none;
   background: none;
   font-family: inherit;
-  font-size: 13.5px;
-  padding: 9px 8px;
+  font-size: 12.5px;
+  padding: 8px 6px;
   border-radius: 10px;
   cursor: pointer;
   color: var(--ink-soft);
@@ -199,6 +199,15 @@ select {
   color: var(--ink);
   max-width: 220px;
   font-size: 13px;
+}
+
+/* ---- Pitch section (tab Cao độ) ---- */
+.pitch-section {
+  margin: 14px 0 4px;
+  padding: 16px;
+  background: var(--bg);
+  border-radius: 10px;
+  border: 1px solid var(--line);
 }
 
 /* ---- Keyboard hints ---- */

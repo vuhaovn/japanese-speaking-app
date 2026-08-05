@@ -7,7 +7,7 @@ import { and, eq, gte } from 'drizzle-orm'
 export async function logSession(data: {
   sessionKey: string
   sentenceId: number
-  mode: 'shadow' | 'repeat'
+  mode: 'shadow' | 'repeat' | 'pitch'
   matchScore?: number | null
 }) {
   await db.insert(practice_sessions).values({
